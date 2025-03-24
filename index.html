@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Star Wars Physics Sandbox</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.18.0/matter.min.js"></script>
+    <script type="module" src="/src/main.ts"></script>
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: #000;
+        font-family: Arial, sans-serif;
+        color: #ffe81f;
+      }
+      #canvas-container {
+        position: relative;
+        width: 100%;
+        height: 100vh;
+      }
+      .controls {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: rgba(0, 0, 0, 0.7);
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #ffe81f;
+        z-index: 10;
+      }
+      button {
+        background-color: #000;
+        color: #ffe81f;
+        border: 1px solid #ffe81f;
+        margin: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      button:hover {
+        background-color: #333;
+      }
+      #gravity-controls {
+        margin-top: 10px;
+      }
+      #object-controls {
+        margin-top: 10px;
+      }
+      select {
+        background-color: #000;
+        color: #ffe81f;
+        border: 1px solid #ffe81f;
+        padding: 5px;
+        margin: 5px 0;
+      }
+      .force-controls {
+        margin-top: 10px;
+      }
+      .title {
+        text-align: center;
+        font-size: 18px;
+        margin-bottom: 10px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-container">
+      <div class="controls">
+        <div class="title">STAR WARS PHYSICS</div>
+        <div id="object-controls">
+          <select id="object-type">
+            <option value="circle">Death Star</option>
+            <option value="rectangle">Star Destroyer</option>
+            <option value="polygon">TIE Fighter</option>
+            <option value="falcon">Millennium Falcon</option>
+            <option value="vader">Darth Vader</option>
+            <option value="luke">Luke Skywalker</option>
+            <option value="yoda">Yoda</option>
+            <option value="stormtrooper">Stormtrooper</option>
+            <option value="emperor">The Emperor</option>
+          </select>
+          <button id="add-object">Add Object</button>
+        </div>
+        <div id="gravity-controls">
+          <button id="toggle-gravity">Toggle Gravity</button>
+          <button id="reset-scene">Reset Scene</button>
+        </div>
+        <div class="force-controls">
+          <button id="force-push">Force Push</button>
+          <button id="toggle-boundaries">Toggle Boundaries</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Initialize Matter.js engine
+      const Engine = Matter.Engine,
+        Render = Matter.Render,
+        World = Matter.World,
+        Bodies = Matter.Bodies,
+        Body = Matter.Body,
+        Composite = Matter.Composite,
+        MouseConstraint = Matter.MouseConstraint,
+        Mouse = Matter.Mouse;
+      let emperorBody = null; // Reference to The Emperor's Matter.js body
+      let emperorSpeed = 0.08; //Adjust as needed
+      let lightningCooldown = 0;
+      const COOLDOWN_TIME = 1;
+      let engine, world, render;
+      let canvas;
+      let boundaries = [];
+      let objects = [];
+      let boundariesEnabled = true;
+      let gravityEnabled = true;
+      let stars = [];
+      let lightningParticles = [];
+      let isLightningActive = false;
+      let lightningOrigin = { x: 0, y: 0 };
+      let objectsToRemove = [];
+      let emperorImg; // Variable to hold the emperor image
+
+      function preload() {
+        emperorImg = loadImage("./palps.png"); // Load image in preload
+      }
+
+      // Star Wars colors
+      const colors = {
+        lightsaberBlue: "#0072ff",
+        lightsaberRed: "#ff0000",
+        lightsaberGreen: "#00ff00",
+        imperialGray: "#555555",
+        rebelOrange: "#ff7700",
+        deathStarGray: "#bbbbbb",
+        tatooineYellow: "#ffcc77",
+        jediRobesBrown: "#663311",
+        starWarsYellow: "#FFE81F",
+        forceLightning: "#9966FF",
+      };
+
+      function setup() {
+        // Create canvas and add it to container
+        canvas = createCanvas(windowWidth, windowHeight);
+        canvas.parent("canvas-container");
+
+        // Initialize Matter.js engine
+        engine = Engine.create();
+        world = engine.world;
+
+        // Set initial gravity
+        engine.world.gravity.y = 1;
+
+        // Set up mouse interaction
+        const canvasMouse = Mouse.create(canvas.elt);
+        canvasMouse.pixelRatio = pixelDensity();
+        const mouseConstraint = MouseConstraint.create(engine, {
+          mouse: canvasMouse,
+          constraint: {
+            stiffness: 0.2,
+            render: {
+              visible: false,
+            },
+          },
+        });
+        World.add(world, mouseConstraint);
+
+        // Create boundaries
+        createBoundaries();
+
+        // Generate stars for background
+        generateStars();
+
+        // Set up event listeners
+        document
+          .getElementById("add-object")
+          .addEventListener("click", addSelectedObject);
+        document
+          .getElementById("toggle-gravity")
+          .addEventListener("click", toggleGravity);
+        document
+          .getElementById("reset-scene")
+          .addEventListener("click", resetScene);
+        document
+          .getElementById("force-push")
+          .addEventListener("click", forceRandomPush);
+        document
+          .getElementById("toggle-boundaries")
+          .addEventListener("click", toggleBoundaries);
+
+        // Add mouse click event for Force Lightning
+        canvas.mouseClicked(createForceLightning);
+
+        document.addEventListener("keydown", handleEmperorControl);
+        document.addEventListener("keyup", handleEmperorControl);
+
+        // Start Matter.js engine
+        Engine.run(engine);
+      }
+
+      function generateStars() {
+        // Generate random stars for the background
+        stars = [];
+        for (let i = 0; i < 200; i++) {
+          stars.push({
+            x: random(width),
+            y: random(height),
+            size: random(1, 3),
+            brightness: random(100, 255),
+          });
+        }
+      }
+
+      function draw() {
+        // Space background - deep black
+        background(0);
+
+        // Draw stars
+        drawStars();
+
+        // Process lightning
+        if (isLightningActive) {
+          updateLightning();
+          checkLightningCollisions();
+        }
+
+        // Draw all bodies
+        push();
+        drawBodies();
+        pop();
+
+        // Draw lightning
+        drawLightning();
+
+        // Remove objects marked for deletion
+        removeMarkedObjects();
+        if(lightningCooldown > 0){
+          lightningCooldown -= (1/60)
+        }
+      }
+
+      function drawStars() {
+        push();
+        noStroke();
+        for (let star of stars) {
+          fill(star.brightness);
+          ellipse(star.x, star.y, star.size);
+        }
+        pop();
+      }
+
+      function drawBodies() {
+        const bodies = Composite.allBodies(world);
+
+        for (let i = 0; i < bodies.length; i++) {
+          const body = bodies[i];
+
+          if (body.isStatic && body.isBoundary) {
+            // Draw boundaries with special style
+            if (boundariesEnabled) {
+              fill(colors.starWarsYellow + "33");
+              stroke(colors.starWarsYellow);
+              strokeWeight(2);
+              drawBody(body);
+            }
+          } else {
+            // Draw dynamic objects
+            drawDynamicBody(body);
+          }
+        }
+      }
+
+      function drawDynamicBody(body) {
+        beginShape();
+
+        if (body.objectType === "falcon") {
+          // Custom Millennium Falcon drawing
+          fill(colors.rebelOrange);
+          stroke(255);
+          strokeWeight(1);
+        } else if (body.objectType === "circle") {
+          // Death Star
+          fill(colors.deathStarGray);
+          stroke(100);
+          strokeWeight(1);
+        } else if (body.objectType === "rectangle") {
+          // Star Destroyer
+          fill(colors.imperialGray);
+          stroke(200);
+          strokeWeight(1);
+        } else if (body.objectType === "polygon") {
+          // TIE Fighter
+          fill(colors.imperialGray);
+          stroke(200);
+          strokeWeight(1);
+        } else if (
+          body.objectType === "vader" ||
+          body.objectType === "luke" ||
+          body.objectType === "yoda" ||
+          body.objectType === "stormtrooper"
+        ) {
+          // Characters
+          fill(body.characterColor || "#FFFFFF");
+          stroke(0);
+          strokeWeight(1);
+        } else {
+          // Default style
+          fill(colors.jediRobesBrown);
+          stroke(255);
+          strokeWeight(1);
+        }
+
+        drawBody(body);
+      }
+
+      function drawBody(body) {
+        if (body.objectType === "falcon") {
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+
+          // Main body
+          fill(200);
+          ellipse(0, 0, 80, 60);
+
+          // Cockpit
+          fill(100);
+          ellipse(30, -10, 20, 15);
+
+          // Mandibles
+          rect(-50, -10, 30, 5);
+          rect(-50, 5, 30, 5);
+
+          pop();
+          return;
+        } else if (body.objectType === "vader") {
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+
+          // Vader's body (black)
+          fill("#000000");
+          rect(-10, -5, 20, 30);
+
+          // Vader's helmet
+          fill("#000000");
+          ellipse(0, -15, 25, 25);
+
+          // Vader's mask details
+          fill("#555555");
+          rect(-7, -15, 14, 5);
+
+          // Vader's cape
+          fill("#000000");
+          triangle(-15, -5, 15, -5, 0, 20);
+
+          // Lightsaber
+          stroke(colors.lightsaberRed);
+          strokeWeight(3);
+          line(12, 5, 25, -8);
+
+          pop();
+          return;
+        } else if (body.objectType === "luke") {
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+
+          // Luke's body (light brown/tan)
+          fill("#D2B48C");
+          rect(-10, -5, 20, 30);
+
+          // Luke's head
+          fill("#FFE4B5");
+          ellipse(0, -15, 20, 20);
+
+          // Luke's hair
+          fill("#A0522D");
+          arc(0, -20, 20, 15, PI, 0);
+
+          // Lightsaber
+          stroke(colors.lightsaberGreen);
+          strokeWeight(3);
+          line(12, 5, 25, -8);
+
+          pop();
+          return;
+        } else if (body.objectType === "yoda") {
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+
+          // Yoda's body (brown robe)
+          fill("#8B4513");
+          rect(-8, -5, 16, 20);
+
+          // Yoda's head (green)
+          fill("#9ACD32");
+          ellipse(0, -12, 18, 15);
+
+          // Yoda's ears
+          ellipse(-12, -12, 10, 5);
+          ellipse(12, -12, 10, 5);
+
+          // Lightsaber
+          stroke(colors.lightsaberGreen);
+          strokeWeight(2);
+          line(10, 0, 20, -5);
+
+          pop();
+          return;
+        } else if (body.objectType === "stormtrooper") {
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+
+          // Stormtrooper body (white)
+          fill("#FFFFFF");
+          rect(-10, -5, 20, 30);
+
+          // Stormtrooper helmet
+          fill("#FFFFFF");
+          ellipse(0, -15, 22, 22);
+
+          // Helmet details (black)
+          fill("#000000");
+          rect(-8, -15, 16, 4);
+
+          // Blaster
+          fill("#555555");
+          rect(12, 0, 15, 3);
+
+          pop();
+          return;
+        } else if (body.objectType === "emperor") {
+          push();
+          translate(body.position.x, body.position.y);
+          //rotate(body.angle);
+          // Use image() to draw the sprite
+          // Adjust -25, -35 to center the image based on its dimensions.
+          image(emperorImg, -25, -35, 50, 70); // Assuming image is roughly 50x70
+          pop();
+          return; // Important: return after drawing
+        }
+
+        // Standard shape rendering
+        const vertices = body.vertices;
+        beginShape();
+        for (let j = 0; j < vertices.length; j++) {
+          vertex(vertices[j].x, vertices[j].y);
+        }
+        endShape(CLOSE);
+
+        // Add details based on object type
+        if (body.objectType === "circle" && body.circleRadius > 20) {
+          // Death Star detail - add the superlaser dish
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+          fill("#444");
+          ellipse(
+            body.circleRadius / 3,
+            -body.circleRadius / 3,
+            body.circleRadius / 2,
+            body.circleRadius / 2
+          );
+          pop();
+        } else if (body.objectType === "polygon") {
+          // TIE Fighter details
+          push();
+          translate(body.position.x, body.position.y);
+          rotate(body.angle);
+          // Center pod
+          fill("#222");
+          ellipse(0, 0, 15, 15);
+          // Wing connectors
+          stroke("#555");
+          strokeWeight(3);
+          line(-8, 0, -25, 0);
+          line(8, 0, 25, 0);
+          pop();
+        }
+      }
+
+      function createBoundaries() {
+        const thickness = 50;
+
+        // Ground
+        const ground = Bodies.rectangle(
+          width / 2,
+          height + thickness / 2,
+          width,
+          thickness,
+          {
+            isStatic: true,
+            isBoundary: true,
+            friction: 0.3,
+          }
+        );
+
+        // Ceiling
+        const ceiling = Bodies.rectangle(
+          width / 2,
+          -thickness / 2,
+          width,
+          thickness,
+          {
+            isStatic: true,
+            isBoundary: true,
+          }
+        );
+
+        // Left wall
+        const leftWall = Bodies.rectangle(
+          -thickness / 2,
+          height / 2,
+          thickness,
+          height,
+          {
+            isStatic: true,
+            isBoundary: true,
+          }
+        );
+
+        // Right wall
+        const rightWall = Bodies.rectangle(
+          width + thickness / 2,
+          height / 2,
+          thickness,
+          height,
+          {
+            isStatic: true,
+            isBoundary: true,
+          }
+        );
+
+        boundaries = [ground, ceiling, leftWall, rightWall];
+        World.add(world, boundaries);
+      }
+
+      function addSelectedObject() {
+        const objectType = document.getElementById("object-type").value;
+        const x = random(100, width - 100);
+        const y = random(100, height / 2);
+
+        let newObject;
+        let characterSize = 30;
+
+        switch (objectType) {
+          case "circle":
+            // Death Star
+            const radius = random(20, 50);
+            newObject = Bodies.circle(x, y, radius, {
+              restitution: 0.7,
+              objectType: "circle",
+              circleRadius: radius,
+            });
+            break;
+
+          case "rectangle":
+            // Star Destroyer
+            const width = random(40, 120);
+            const height = random(20, 40);
+            newObject = Bodies.trapezoid(x, y, width, height, 0.3, {
+              restitution: 0.6,
+              objectType: "rectangle",
+            });
+            break;
+
+          case "polygon":
+            // TIE Fighter
+            newObject = Bodies.polygon(x, y, 6, 30, {
+              restitution: 0.8,
+              objectType: "polygon",
+            });
+            break;
+
+          case "falcon":
+            // Millennium Falcon (custom shape)
+            newObject = Bodies.circle(x, y, 40, {
+              restitution: 0.7,
+              objectType: "falcon",
+            });
+            break;
+
+          case "vader":
+            // Darth Vader
+            newObject = Bodies.rectangle(
+              x,
+              y,
+              characterSize,
+              characterSize * 1.5,
+              {
+                restitution: 0.5,
+                objectType: "vader",
+                characterColor: "#000000",
+              }
+            );
+            break;
+
+          case "luke":
+            // Luke Skywalker
+            newObject = Bodies.rectangle(
+              x,
+              y,
+              characterSize,
+              characterSize * 1.5,
+              {
+                restitution: 0.5,
+                objectType: "luke",
+                characterColor: "#D2B48C",
+              }
+            );
+            break;
+
+          case "yoda":
+            // Yoda
+            newObject = Bodies.rectangle(
+              x,
+              y,
+              characterSize * 0.8,
+              characterSize,
+              {
+                restitution: 0.5,
+                objectType: "yoda",
+                characterColor: "#9ACD32",
+              }
+            );
+            break;
+
+          case "stormtrooper":
+            // Stormtrooper
+            newObject = Bodies.rectangle(
+              x,
+              y,
+              characterSize,
+              characterSize * 1.5,
+              {
+                restitution: 0.5,
+                objectType: "stormtrooper",
+                characterColor: "#FFFFFF",
+              }
+            );
+            break;
+          case "emperor":
+            // The Emperor
+            newObject = Bodies.rectangle(
+              x,
+              y,
+              characterSize * 1.2,
+              characterSize * 1.8,
+              {
+                restitution: 0.5,
+                objectType: "emperor",
+              }
+            );
+            emperorBody = newObject; // Store reference to The Emperor's body
+            break;
+
+          default:
+            newObject = Bodies.circle(x, y, 30, {
+              restitution: 0.7,
+              objectType: "circle",
+              circleRadius: 30,
+            });
+            break;
+        }
+
+        objects.push(newObject);
+        World.add(world, newObject);
+      }
+
+      function toggleGravity() {
+        gravityEnabled = !gravityEnabled;
+        engine.world.gravity.y = gravityEnabled ? 1 : 0;
+
+        // If turning gravity off, add some random motion
+        if (!gravityEnabled) {
+          const bodies = Composite.allBodies(world).filter(
+            (body) => !body.isStatic
+          );
+          bodies.forEach((body) => {
+            Body.setVelocity(body, {
+              x: random(-2, 2),
+              y: random(-2, 2),
+            });
+          });
+        }
+      }
+
+      function resetScene() {
+        // Remove all objects except boundaries
+        objects.forEach((obj) => World.remove(world, obj));
+        objects = [];
+      }
+
+      function forceRandomPush() {
+        const bodies = Composite.allBodies(world).filter(
+          (body) => !body.isStatic
+        );
+
+        bodies.forEach((body) => {
+          // Force push from center outward
+          const forceX = (body.position.x - width / 2) * 0.008;
+          const forceY = (body.position.y - height / 2) * 0.008;
+
+          Body.applyForce(body, body.position, {
+            x: forceX,
+            y: forceY,
+          });
+
+          // Add a visual force effect (would be better with particles)
+          push();
+          stroke(colors.lightsaberBlue);
+          strokeWeight(2);
+          line(width / 2, height / 2, body.position.x, body.position.y);
+          pop();
+        });
+      }
+
+      function toggleBoundaries() {
+        boundariesEnabled = !boundariesEnabled;
+
+        boundaries.forEach((boundary) => {
+          if (boundariesEnabled) {
+            World.add(world, boundary);
+          } else {
+            World.remove(world, boundary);
+          }
+        });
+
+        if (boundariesEnabled) {
+          createBoundaries();
+        }
+      }
+
+      function createForceLightning(position = {x:mouseX, y:mouseY}) {
+        if (!emperorBody) return;
+        isLightningActive = true;
+        lightningOrigin = { x: position.x, y: position.y };
+        lightningCooldown = COOLDOWN_TIME;
+        lightningParticles = [];
+
+        // Create initial lightning branches
+        for (let i = 0; i < 12; i++) {
+          let angle = random(0, TWO_PI);
+          let speed = random(3, 10);
+
+          lightningParticles.push({
+            x: lightningOrigin.x,
+            y: lightningOrigin.y,
+            vx: cos(angle) * speed,
+            vy: sin(angle) * speed,
+            life: 255,
+            branches: [],
+            thickness: random(2, 4),
+            hasChildBranch: false,
+          });
+        }
+      }
+
+      function updateLightning() {
+        // Update main particles
+        for (let i = lightningParticles.length - 1; i >= 0; i--) {
+          let p = lightningParticles[i];
+
+          // Move particle
+          p.x += p.vx;
+          p.y += p.vy;
+
+          // Reduce life
+          p.life -= 5;
+
+          // Create branches randomly
+          if (!p.hasChildBranch && p.life > 150 && random() < 0.05) {
+            p.hasChildBranch = true;
+            let angle = random(-PI / 4, PI / 4);
+            let newVx = p.vx * cos(angle) - p.vy * sin(angle);
+            let newVy = p.vx * sin(angle) + p.vy * cos(angle);
+
+            lightningParticles.push({
+              x: p.x,
+              y: p.y,
+              vx: newVx,
+              vy: newVy,
+              life: p.life * 0.8,
+              branches: [],
+              thickness: p.thickness * 0.7,
+              hasChildBranch: false,
+            });
+          }
+
+          // Store previous position as branch
+          p.branches.push({ x: p.x, y: p.y });
+
+          // Remove dead particles
+          if (p.life <= 0) {
+            lightningParticles.splice(i, 1);
+          }
+        }
+
+        // Deactivate lightning if all particles are gone
+        if (lightningParticles.length === 0) {
+          isLightningActive = false;
+        }
+      }
+
+      function drawLightning() {
+        if (!isLightningActive) return;
+
+        push();
+        for (let particle of lightningParticles) {
+          // Draw lightning branches as connected lines
+          strokeWeight(particle.thickness);
+          for (let i = 0; i < particle.branches.length - 1; i++) {
+            let alpha = map(i, 0, particle.branches.length - 1, 100, 255);
+            stroke(colors.forceLightning + alpha.toString(16).padStart(2, "0"));
+
+            // Add some random jitter to make it more lightning-like
+            let jitter = particle.thickness * 0.5;
+            let x1 = particle.branches[i].x + random(-jitter, jitter);
+            let y1 = particle.branches[i].y + random(-jitter, jitter);
+            let x2 = particle.branches[i + 1].x;
+            let y2 = particle.branches[i + 1].y;
+
+            line(x1, y1, x2, y2);
+          }
+        }
+
+        // Draw lightning origin glow
+        noStroke();
+        fill(colors.forceLightning + "66");
+        ellipse(lightningOrigin.x, lightningOrigin.y, 40, 40);
+        fill(colors.forceLightning + "AA");
+        ellipse(lightningOrigin.x, lightningOrigin.y, 20, 20);
+        fill(colors.forceLightning);
+        ellipse(lightningOrigin.x, lightningOrigin.y, 10, 10);
+        pop();
+      }
+
+      function checkLightningCollisions() {
+        // Get all non-static bodies
+        const bodies = Composite.allBodies(world).filter(
+          (body) => (!body.isStatic && body.objectType !== "emperor") // Exclude emperor for collision
+        );
+
+        // Check for collisions with lightning particles
+        for (let body of bodies) {
+          for (let particle of lightningParticles) {
+            // Simple distance check for collision
+            let dx = particle.x - body.position.x;
+            let dy = particle.y - body.position.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+
+            // If lightning touches the object
+            let collisionRadius = body.circleRadius || 40; // Use circle radius or default
+            if (distance < collisionRadius) {
+              // Mark for removal
+              if (!objectsToRemove.includes(body)) {
+                objectsToRemove.push(body);
+
+                // Create destruction particles
+                createDestructionEffect(body.position.x, body.position.y);
+              }
+            }
+          }
+        }
+      }
+
+      function createDestructionEffect(x, y) {
+        // Visual effect for destruction
+        for (let i = 0; i < 20; i++) {
+          let angle = random(0, TWO_PI);
+          let speed = random(2, 8);
+
+          lightningParticles.push({
+            x: x,
+            y: y,
+            vx: cos(angle) * speed,
+            vy: sin(angle) * speed,
+            life: 100,
+            branches: [],
+            thickness: random(1, 2),
+            hasChildBranch: false,
+          });
+        }
+      }
+
+      function removeMarkedObjects() {
+        // Remove objects marked for deletion
+        for (let obj of objectsToRemove) {
+          World.remove(world, obj);
+
+          // Also remove from objects array
+          const index = objects.indexOf(obj);
+          if (index > -1) {
+            objects.splice(index, 1);
+          }
+        }
+
+        // Clear the removal list
+        objectsToRemove = [];
+      }
+
+      function windowResized() {
+        resizeCanvas(windowWidth, windowHeight);
+
+        // Remove and recreate boundaries
+        boundaries.forEach((boundary) => World.remove(world, boundary));
+        createBoundaries();
+
+        // Regenerate stars for new dimensions
+        generateStars();
+      }
+      function handleEmperorControl(event) {
+        if (!emperorBody) return;
+        if (event.repeat) return;
+
+        let forceX = 0;
+        let forceY = 0;
+
+        if (event.type === "keydown") {
+          switch (event.key) {
+            case "w":
+              forceY = -emperorSpeed;
+              break;
+            case "s":
+              forceY = emperorSpeed;
+              break;
+            case "a":
+              forceX = -emperorSpeed;
+              break;
+            case "d":
+              forceX = emperorSpeed;
+              break;
+            case " ":
+              if (lightningCooldown <= 0) {
+                createForceLightning(emperorBody.position);
+              }
+              break;
+          }
+        } else if (event.type === "keyup") {
+          switch (event.key) {
+            case "w":
+            case "s":
+              forceY = 0; // Stop vertical movement
+              break;
+            case "a":
+            case "d":
+              forceX = 0; // Stop horizontal movement
+              break;
+          }
+        }
+
+        Body.applyForce(emperorBody, emperorBody.position, {
+          x: forceX,
+          y: forceY,
+        });
+      }
+    </script>
+  </body>
+</html>
