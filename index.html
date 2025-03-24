@@ -121,6 +121,7 @@
       let isLightningActive = false;
       let lightningOrigin = { x: 0, y: 0 };
       let objectsToRemove = [];
+      let particles = []; // Array to hold destruction particles
       let emperorImg; // Variable to hold the emperor image
 
       function preload() {
@@ -191,7 +192,7 @@
           .addEventListener("click", toggleBoundaries);
 
         // Add mouse click event for Force Lightning
-        canvas.mouseClicked(createForceLightning);
+        //canvas.mouseClicked(createForceLightning);
 
         document.addEventListener("keydown", handleEmperorControl);
         document.addEventListener("keyup", handleEmperorControl);
@@ -236,8 +237,9 @@
 
         // Remove objects marked for deletion
         removeMarkedObjects();
-        if(lightningCooldown > 0){
-          lightningCooldown -= (1/60)
+        removeDestructionParticles();
+        if (lightningCooldown > 0) {
+          lightningCooldown -= 1 / 60;
         }
       }
 
@@ -736,73 +738,59 @@
         }
       }
 
-      function createForceLightning(position = {x:mouseX, y:mouseY}) {
+      function createForceLightning(position = { x: mouseX, y: mouseY }) {
         if (!emperorBody) return;
         isLightningActive = true;
-        lightningOrigin = { x: position.x, y: position.y };
+        lightningOrigin = {
+          x: emperorBody.position.x - 10,
+          y: emperorBody.position.y + 10,
+        }; //start at emperor
         lightningCooldown = COOLDOWN_TIME;
         lightningParticles = [];
 
-        // Create initial lightning branches
-        for (let i = 0; i < 12; i++) {
-          let angle = random(0, TWO_PI);
-          let speed = random(3, 10);
+        // Calculate direction from emperor to mouse
+        let targetX = position.x;
+        let targetY = position.y;
+        let dx = targetX - lightningOrigin.x;
+        let dy = targetY - lightningOrigin.y;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+        let angle = Math.atan2(dy, dx);
 
-          lightningParticles.push({
-            x: lightningOrigin.x,
-            y: lightningOrigin.y,
-            vx: cos(angle) * speed,
-            vy: sin(angle) * speed,
-            life: 255,
-            branches: [],
-            thickness: random(2, 4),
-            hasChildBranch: false,
-          });
+        //create a single lightning bolt
+        const numSegments = Math.floor(distance / 10); // Adjust for segment length
+        let prevPoint = { x: lightningOrigin.x, y: lightningOrigin.y };
+        lightningParticles.push({
+          x: lightningOrigin.x,
+          y: lightningOrigin.y,
+          segments: [],
+          life: 333,
+          thickness: 4,
+        });
+
+        for (let i = 1; i <= numSegments; i++) {
+          let segmentRatio = i / numSegments;
+          let x = lightningOrigin.x + dx * segmentRatio;
+          let y = lightningOrigin.y + dy * segmentRatio;
+
+          // Add zig-zag
+          let offset = 30; //adjust for zig zag intensity
+          if (i < numSegments) {
+            x += Math.sin(angle + Math.PI / 2) * random(-offset, offset);
+            y += Math.cos(angle + Math.PI / 2) * random(-offset, offset);
+          }
+          //add segment to array
+          lightningParticles[0].segments.push({ x: x, y: y });
         }
       }
 
       function updateLightning() {
-        // Update main particles
-        for (let i = lightningParticles.length - 1; i >= 0; i--) {
-          let p = lightningParticles[i];
-
-          // Move particle
-          p.x += p.vx;
-          p.y += p.vy;
-
-          // Reduce life
-          p.life -= 5;
-
-          // Create branches randomly
-          if (!p.hasChildBranch && p.life > 150 && random() < 0.05) {
-            p.hasChildBranch = true;
-            let angle = random(-PI / 4, PI / 4);
-            let newVx = p.vx * cos(angle) - p.vy * sin(angle);
-            let newVy = p.vx * sin(angle) + p.vy * cos(angle);
-
-            lightningParticles.push({
-              x: p.x,
-              y: p.y,
-              vx: newVx,
-              vy: newVy,
-              life: p.life * 0.8,
-              branches: [],
-              thickness: p.thickness * 0.7,
-              hasChildBranch: false,
-            });
+        if (lightningParticles.length > 0) {
+          lightningParticles[0].life -= 5;
+          if (lightningParticles[0].life <= 0) {
+            lightningParticles = [];
+            isLightningActive = false;
           }
-
-          // Store previous position as branch
-          p.branches.push({ x: p.x, y: p.y });
-
-          // Remove dead particles
-          if (p.life <= 0) {
-            lightningParticles.splice(i, 1);
-          }
-        }
-
-        // Deactivate lightning if all particles are gone
-        if (lightningParticles.length === 0) {
+        } else {
           isLightningActive = false;
         }
       }
@@ -811,83 +799,110 @@
         if (!isLightningActive) return;
 
         push();
-        for (let particle of lightningParticles) {
-          // Draw lightning branches as connected lines
-          strokeWeight(particle.thickness);
-          for (let i = 0; i < particle.branches.length - 1; i++) {
-            let alpha = map(i, 0, particle.branches.length - 1, 100, 255);
-            stroke(colors.forceLightning + alpha.toString(16).padStart(2, "0"));
+        stroke(colors.forceLightning);
+        strokeWeight(lightningParticles[0].thickness);
+        noFill();
 
-            // Add some random jitter to make it more lightning-like
-            let jitter = particle.thickness * 0.5;
-            let x1 = particle.branches[i].x + random(-jitter, jitter);
-            let y1 = particle.branches[i].y + random(-jitter, jitter);
-            let x2 = particle.branches[i + 1].x;
-            let y2 = particle.branches[i + 1].y;
-
-            line(x1, y1, x2, y2);
-          }
+        //draw the segments of the lightning
+        beginShape();
+        vertex(lightningParticles[0].x, lightningParticles[0].y);
+        for (const segment of lightningParticles[0].segments) {
+          vertex(segment.x, segment.y);
         }
+        endShape();
 
-        // Draw lightning origin glow
-        noStroke();
-        fill(colors.forceLightning + "66");
-        ellipse(lightningOrigin.x, lightningOrigin.y, 40, 40);
-        fill(colors.forceLightning + "AA");
-        ellipse(lightningOrigin.x, lightningOrigin.y, 20, 20);
-        fill(colors.forceLightning);
-        ellipse(lightningOrigin.x, lightningOrigin.y, 10, 10);
+        // Draw lightning origin glow on Emperor
+        if (emperorBody) {
+          noStroke();
+          fill(colors.forceLightning + "66");
+          ellipse(emperorBody.position.x, emperorBody.position.y, 40, 40);
+          fill(colors.forceLightning + "AA");
+          ellipse(emperorBody.position.x, emperorBody.position.y, 20, 20);
+          fill(colors.forceLightning);
+          ellipse(emperorBody.position.x, emperorBody.position.y, 10, 10);
+        }
         pop();
       }
 
       function checkLightningCollisions() {
         // Get all non-static bodies
         const bodies = Composite.allBodies(world).filter(
-          (body) => (!body.isStatic && body.objectType !== "emperor") // Exclude emperor for collision
+          (body) => !body.isStatic && body.objectType != "emperor" && body.objectType != "particle" // Exclude emperor for collision
         );
 
         // Check for collisions with lightning particles
         for (let body of bodies) {
-          for (let particle of lightningParticles) {
-            // Simple distance check for collision
-            let dx = particle.x - body.position.x;
-            let dy = particle.y - body.position.y;
-            let distance = Math.sqrt(dx * dx + dy * dy);
+          lightningParticles.forEach((lightningParticle) => {
+            //make sure there is lightning
+            for (let segment of lightningParticle.segments) {
+              //iterate on the lightning segments
+              // Simple distance check for collision
+              let dx = segment.x - body.position.x;
+              let dy = segment.y - body.position.y;
+              let distance = Math.sqrt(dx * dx + dy * dy);
 
-            // If lightning touches the object
-            let collisionRadius = body.circleRadius || 40; // Use circle radius or default
-            if (distance < collisionRadius) {
-              // Mark for removal
-              if (!objectsToRemove.includes(body)) {
-                objectsToRemove.push(body);
+              // If lightning touches the object
+              let collisionRadius = body.circleRadius || 30; // Use circle radius or default
+              if (distance < collisionRadius) {
+                // Mark for removal
+                if (!objectsToRemove.includes(body)) {
+                  objectsToRemove.push(body);
 
-                // Create destruction particles
-                createDestructionEffect(body.position.x, body.position.y);
+                  // Create destruction particles
+                  createDestructionEffect(body.position.x, body.position.y);
+                }
               }
             }
-          }
+          });
         }
       }
 
       function createDestructionEffect(x, y) {
         // Visual effect for destruction
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 5; i++) {
           let angle = random(0, TWO_PI);
           let speed = random(2, 8);
-
-          lightningParticles.push({
-            x: x,
-            y: y,
-            vx: cos(angle) * speed,
-            vy: sin(angle) * speed,
-            life: 100,
-            branches: [],
-            thickness: random(1, 2),
-            hasChildBranch: false,
+          // Create a small particle explosion effect
+          
+          const particle = Bodies.circle(
+            x,
+            y,
+            random(2, 5),
+            {
+              restitution: 0.8,
+              friction: 0.1,
+              isStatic: false,
+              removeIn: 100, // Remove after 100 frames
+              objectType: "particle", // Mark as particle for tracking
+            }
+          );
+          Body.setVelocity(particle, {
+            x: speed * cos(angle),
+            y: speed * sin(angle),
           });
+          World.add(world, particle);
+          // Add to objects array for removal later
+          particles.push(particle); // Keep track of particles
+          objects.push(particle); // Keep track of particles
         }
       }
 
+      function removeDestructionParticles() {
+        // Remove particles after their lifetime
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const particle = particles[i];
+          if (particle.removeIn && particle.removeIn <= 0) {
+            World.remove(world, particle);
+            particles.splice(i, 1);
+            const index = objects.indexOf(particle);
+            if (index > -1) {
+              objects.splice(index, 1);
+            }
+          } else {
+            particle.removeIn -= 1 / 60; // Decrease lifetime
+          }
+        }
+      }
       function removeMarkedObjects() {
         // Remove objects marked for deletion
         for (let obj of objectsToRemove) {
@@ -935,9 +950,10 @@
             case "d":
               forceX = emperorSpeed;
               break;
-            case " ":
+            case "l":
               if (lightningCooldown <= 0) {
-                createForceLightning(emperorBody.position);
+                const position = { x: mouseX, y: mouseY };
+                createForceLightning(position);
               }
               break;
           }
