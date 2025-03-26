@@ -121,9 +121,11 @@
       let objectsToRemove = [];
       let particles = []; // Array to hold destruction particles
       let emperorImg; // Variable to hold the emperor image
+      let trooperImg; // Variable to hold the stormtrooper image
 
       function preload() {
         emperorImg = loadImage("./palps.png"); // Load image in preload
+        trooperImg = loadImage("./stroop.png");
       }
 
       // Star Wars colors
@@ -415,23 +417,7 @@
           push();
           translate(body.position.x, body.position.y);
           rotate(body.angle);
-
-          // Stormtrooper body (white)
-          fill("#FFFFFF");
-          rect(-10, -5, 20, 30);
-
-          // Stormtrooper helmet
-          fill("#FFFFFF");
-          ellipse(0, -15, 22, 22);
-
-          // Helmet details (black)
-          fill("#000000");
-          rect(-8, -15, 16, 4);
-
-          // Blaster
-          fill("#555555");
-          rect(12, 0, 15, 3);
-
+          image(trooperImg, -25, -35, 50, 70); // Assuming image is roughly 50x70
           pop();
           return;
         } else if (body.objectType === "emperor") {
